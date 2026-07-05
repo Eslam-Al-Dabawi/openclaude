@@ -36,7 +36,8 @@ import { updateLastInteractionTime, getLastInteractionTime, getOriginalCwd, getP
 import { asSessionId, asAgentId } from '../types/ids.js';
 import { logForDebugging } from '../utils/debug.js';
 import { QueryGuard } from '../utils/QueryGuard.js';
-import { QueryLifecycleOperationTracker, formatQueryLifecycleAbortSignalReason, formatQueryLifecycleLogMessage, type QueryActiveOperationSnapshot, type QueryGuardTimeoutInfo, type QueryLifecycleContext, type QueryTerminalReason } from '../utils/queryLifecycle.js';
+import { getQueryGuardOptionsFromEnv } from '../utils/queryGuardConfig.js';
+import { QueryLifecycleOperationTracker, formatQueryLifecycleAbortSignalReason, formatQueryLifecycleLogMessage, getQueryTerminalReason, type QueryActiveOperationSnapshot, type QueryGuardTimeoutInfo, type QueryLifecycleContext, type QueryTerminalReason } from '../utils/queryLifecycle.js';
 import { createCombinedAbortSignal } from '../utils/combinedAbortSignal.js';
 import { isEnvTruthy } from '../utils/envUtils.js';
 import { formatTokens, truncateToWidth } from '../utils/format.js';
@@ -559,20 +560,6 @@ function getAbortReasonLabel(reason: unknown): string | undefined {
   if (reason instanceof Error) return reason.name;
   return String(reason);
 }
-function getQueryTerminalReason(signal: AbortSignal, didThrow: boolean): QueryTerminalReason {
-  if (!signal.aborted) return didThrow ? 'unknown' : 'ok';
-  switch (getAbortReasonLabel(signal.reason)) {
-    case 'query-timeout':
-      return 'query-timeout';
-    case 'user-cancel':
-    case 'interrupt':
-      return 'user-abort';
-    case 'background':
-      return 'parent-ended';
-    default:
-      return 'unknown';
-  }
-}
 function summarizeActiveOperations(snapshot: QueryActiveOperationSnapshot): string {
   const apiIds = snapshot.apiCalls.map(call => call.requestId ?? call.clientRequestId ?? 'unknown').join(',');
   const toolIds = snapshot.toolUses.map(tool => `${tool.toolName}:${tool.toolUseId}`).join(',');
@@ -1002,7 +989,11 @@ export function REPL({
   // Synchronous state machine for the query lifecycle. Replaces the
   // error-prone dual-state pattern where isLoading (React state, async
   // batched) and isQueryRunning (ref, sync) could desync. See QueryGuard.ts.
-  const queryGuard = React.useRef(new QueryGuard()).current;
+  const queryGuardRef = React.useRef<QueryGuard | null>(null);
+  if (queryGuardRef.current === null) {
+    queryGuardRef.current = new QueryGuard(getQueryGuardOptionsFromEnv());
+  }
+  const queryGuard = queryGuardRef.current;
 
   // Subscribe to the guard — true during dispatching or running.
   // This is the single source of truth for "is a local query in flight".
@@ -1804,11 +1795,12 @@ export function REPL({
   const mrRender = useCallback(() => null, []);
   const abortTimedOutQuery = useCallback((timeout: QueryGuardTimeoutInfo) => {
     const timeoutOperations = summarizeActiveOperations(timeout.activeOperations);
+    const timeoutAbortReason = timeout.context.terminalReason ?? 'query-timeout';
     logQueryLifecycle('timeout', timeout.context, timeoutOperations);
     const activeAbortController = abortControllerRef.current;
     if (activeAbortController && !activeAbortController.signal.aborted) {
-      logQueryLifecycle('abort_requested', timeout.context, formatQueryLifecycleAbortSignalReason('query-timeout'));
-      activeAbortController.abort('query-timeout');
+      logQueryLifecycle('abort_requested', timeout.context, formatQueryLifecycleAbortSignalReason(timeoutAbortReason));
+      activeAbortController.abort(timeoutAbortReason);
     }
     if (timeout.activeOperations.apiCalls.length > 0) {
       logForDebugging(`api.call.active_on_abort queryId=${timeout.context.queryId} generation=${timeout.generation} ${timeoutOperations}`);
@@ -1820,7 +1812,7 @@ export function REPL({
     // QueryGuard calls this before forceEnd(); defer UI cleanup until after
     // the guard has released so the normal stale-generation finally path skips.
     queueMicrotask(() => {
-      logQueryLifecycle('abort_acknowledged', timeout.context, formatQueryLifecycleAbortSignalReason('query-timeout'));
+      logQueryLifecycle('abort_acknowledged', timeout.context, formatQueryLifecycleAbortSignalReason(timeoutAbortReason));
       resetLoadingState();
       setAbortController(null);
       void mrOnTurnComplete(messagesRef.current, true);

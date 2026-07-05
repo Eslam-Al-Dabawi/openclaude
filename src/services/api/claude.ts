@@ -58,6 +58,10 @@ import {
 } from '../../utils/api.js'
 import { getOauthAccountInfo } from '../../utils/auth.js'
 import {
+  getStreamingAbortMessage,
+  shouldCreateUserInterruptionMessage,
+} from '../../utils/abortReasons.js'
+import {
   getBedrockExtraBodyParamsBetas,
   getMergedBetas,
   getModelBetas,
@@ -799,6 +803,13 @@ export async function* queryModelWithStreaming({
       options,
     )
   })
+}
+
+export function getClaudeStreamingAbortLogMessage(
+  signal: Pick<AbortSignal, 'reason'>,
+  streamingError: unknown,
+): string {
+  return getStreamingAbortMessage(signal.reason, errorMessage(streamingError))
 }
 
 /**
@@ -2622,15 +2633,16 @@ async function* queryModel(
       }
 
       if (streamingError instanceof APIUserAbortError) {
-        // Check if the abort signal was triggered by the user (ESC key)
-        // If the signal is aborted, it's a user-initiated abort
+        // If the signal is aborted, classify by the AbortSignal reason.
         // If not, it's likely a timeout from the SDK
         if (signal.aborted) {
-          // This is a real user abort (ESC key was pressed)
           logForDebugging(
-            `Streaming aborted by user: ${errorMessage(streamingError)}`,
+            getClaudeStreamingAbortLogMessage(signal, streamingError),
           )
-          if (isAdvisorInProgress) {
+          if (
+            isAdvisorInProgress &&
+            shouldCreateUserInterruptionMessage(signal.reason)
+          ) {
             logEvent('tengu_advisor_tool_interrupted', {
               model:
                 options.model as AnalyticsMetadata_I_VERIFIED_THIS_IS_NOT_CODE_OR_FILEPATHS,
@@ -2653,7 +2665,7 @@ async function* queryModel(
 
       if (signal.aborted) {
         logForDebugging(
-          `Streaming aborted by parent signal: ${errorMessage(streamingError)}`,
+          getClaudeStreamingAbortLogMessage(signal, streamingError),
         )
         throw new APIUserAbortError()
       }

@@ -146,13 +146,28 @@ or network service, and permission/provider/model/settings flags are passed to
 the child process the same way they are for a foreground `--print` run. Session
 metadata and logs are stored under the resolved OpenClaude config directory,
 usually `~/.openclaude/bg-sessions/`; `OPENCLAUDE_CONFIG_DIR` can point
-OpenClaude somewhere else, with `CLAUDE_CONFIG_DIR` still supported as the
-legacy fallback. Session names can be reused after older sessions reach a
-terminal state; use the session ID to inspect older logs with the same name.
+OpenClaude somewhere else. `CLAUDE_CONFIG_DIR` is ignored for OpenClaude
+background-session storage. Session names can be reused after older sessions
+reach a terminal state; use the session ID to inspect older logs with the same
+name.
 
 `openclaude attach <id-or-name>` currently reports the matching session and
 points to `openclaude logs <id> -f`; full terminal reattach is not implemented
 for local background sessions yet.
+
+### OpenClaude config cutover
+
+OpenClaude stores its own config under `~/.openclaude` and `~/.openclaude.json`
+by default. It does not read `~/.claude`, project `.claude/` directories, or
+`CLAUDE_CONFIG_DIR`; new users can start with an empty OpenClaude config and do
+not need Claude Code installed.
+
+If you previously used OpenClaude with `.claude` paths, migrate intentionally:
+copy only the settings, commands, agents, skills, scheduled tasks, or other files
+you personally created for OpenClaude into the matching `.openclaude` location.
+Do not blanket-copy `.claude`, and do not copy Claude Code credentials or auth
+files. For provider authentication, prefer running OpenClaude's provider setup
+again or exporting provider-specific environment variables.
 
 ### Fastest OpenAI setup
 
